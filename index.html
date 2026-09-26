@@ -15,6 +15,8 @@
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <!-- Biblioteca do Supabase (usada apenas se a sincronização em nuvem for configurada) -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <!-- Tema salvo aplicado antes do CSS pintar a tela (evita "flash" de tema errado).
      O padrão da Dutra é o modo claro, clínico; o escuro é opcional. -->
 <script>
@@ -1985,7 +1987,7 @@ h1, h2, h3, h4, .num-f {
       <div class="modal-bd" id="areaNota"></div>
       <div class="modal-ft">
         <button class="btn btn-g btn-sm" onclick="enviarNotaWhats()">📲 Enviar WhatsApp</button>
-        <button class="btn btn-b btn-sm" onclick="imprimirNota()">🖨️ Imprimir / PDF</button>
+        <button class="btn btn-b btn-sm" onclick="baixarNotaPDF()">📄 PDF</button>
         <button class="btn btn-sec btn-sm" onclick="copiarNota()">📋 Copiar texto</button>
         <button class="btn btn-sec btn-sm" onclick="fecharNota()">Fechar</button>
       </div>
@@ -3429,33 +3431,93 @@ function notaHTML(p) {
   </div>`;
 }
 
+// ------------------------------------------------------------
+// Cupom em texto monoespaçado (estilo NFC-e) para envio via WhatsApp.
+// ------------------------------------------------------------
+const CUPOM_LARGURA = 40;
+
+function cLinha(ch = '-') { return ch.repeat(CUPOM_LARGURA); }
+
+function cCentro(txt) {
+  txt = String(txt || '');
+  if (txt.length >= CUPOM_LARGURA) return txt.slice(0, CUPOM_LARGURA);
+  const esp = CUPOM_LARGURA - txt.length;
+  const ini = Math.floor(esp / 2);
+  return ' '.repeat(ini) + txt;
+}
+
+function cColunas(esq, dir) {
+  esq = String(esq || ''); dir = String(dir || '');
+  const espaco = CUPOM_LARGURA - esq.length - dir.length;
+  if (espaco < 1) return (esq + ' ' + dir).slice(0, CUPOM_LARGURA);
+  return esq + ' '.repeat(espaco) + dir;
+}
+
+function cQuebraTexto(txt, largura = CUPOM_LARGURA) {
+  const palavras = String(txt || '').split(' ');
+  const linhas = [];
+  let atual = '';
+  palavras.forEach(w => {
+    if ((atual + ' ' + w).trim().length > largura) {
+      if (atual) linhas.push(atual.trim());
+      atual = w;
+    } else {
+      atual = (atual + ' ' + w).trim();
+    }
+  });
+  if (atual) linhas.push(atual.trim());
+  return linhas;
+}
+
 function notaTexto(p) {
   const emp = DB.config;
-  const cli = byId(DB.clientes, p.clienteId) || { nome: 'Cliente' };
+  const cli = byId(DB.clientes, p.clienteId) || { nome: 'CONSUMIDOR NÃO IDENTIFICADO' };
+  const agora = new Date();
   const L = [];
-  L.push(`*DUTRA — ${emp.nome}*`);
-  L.push(`CNPJ ${emp.cnpj} · ${emp.fone}`);
-  L.push('');
-  L.push(`*PEDIDO #${p.numero}* — ${fmtData(p.data)}`);
-  L.push(`Cliente: ${cli.nome}`);
-  if (cli.doc) L.push(`CPF/CNPJ: ${cli.doc}`);
-  L.push('');
-  L.push('*ITENS*');
-  p.itens.forEach((i, n) => {
-    L.push(`${n + 1}. ${i.nome} (${i.codigo})`);
-    L.push(`   ${i.qtd} ${i.unidade || ''} x ${fmtMoeda(i.preco)} = ${fmtMoeda(i.qtd * i.preco)}`);
+
+  L.push('```');
+  L.push(cCentro((emp.nome || 'DUTRA').toUpperCase()));
+  if (emp.cnpj) L.push(cCentro(`CNPJ: ${emp.cnpj}`));
+  if (emp.endereco) cQuebraTexto(emp.endereco).forEach(l => L.push(cCentro(l)));
+  if (emp.fone) L.push(cCentro(`Fone: ${emp.fone}`));
+  L.push(cCentro('DOCUMENTO SEM VALOR FISCAL'));
+  L.push(cCentro('COMPROVANTE DE PEDIDO'));
+  L.push(cLinha('='));
+
+  L.push(cColunas('CÓDIGO', 'VL TOTAL'));
+  L.push('DESCRIÇÃO');
+  L.push(cLinha());
+  p.itens.forEach(i => {
+    L.push(cColunas(String(i.codigo || ''), fmtMoeda(i.qtd * i.preco)));
+    cQuebraTexto(i.nome).forEach(l => L.push(l));
+    L.push(cColunas(`${i.qtd} ${i.unidade || 'UN'} x ${fmtMoeda(i.preco)}`, ''));
+    L.push('');
   });
-  L.push('');
-  L.push(`Subtotal: ${fmtMoeda(p.subtotal)}`);
-  if (p.desconto) L.push(`Desconto: -${fmtMoeda(p.desconto)}`);
-  if (p.frete) L.push(`Frete: ${fmtMoeda(p.frete)}`);
-  L.push(`*TOTAL: ${fmtMoeda(p.total)}*`);
-  L.push(`Pagamento: ${p.pgto || '-'}`);
-  if (p.obs) { L.push(''); L.push(`Obs: ${p.obs}`); }
-  if (emp.pix) L.push(`PIX: ${emp.pix}`);
-  L.push('');
-  L.push('Documento sem valor fiscal — confirmação do pedido.');
-  L.push(`${emp.nome} · ${emp.email}`);
+  L.push(cLinha());
+  L.push(cColunas('QTD TOTAL DE ITENS', String(p.itens.reduce((s, i) => s + Number(i.qtd || 0), 0))));
+  if (p.desconto) L.push(cColunas('DESCONTO', '-' + fmtMoeda(p.desconto)));
+  if (p.frete) L.push(cColunas('FRETE', fmtMoeda(p.frete)));
+  L.push(cColunas('VALOR TOTAL R$', fmtMoeda(p.total)));
+  L.push(cLinha('='));
+
+  L.push(cColunas('FORMA PAGAMENTO', 'VALOR PAGO R$'));
+  L.push(cColunas(p.pgto || 'Não informado', fmtMoeda(p.total)));
+  L.push(cLinha());
+
+  L.push(cCentro(`CLIENTE: ${(cli.nome || '').toUpperCase()}`));
+  if (cli.doc) L.push(cCentro(`CPF/CNPJ: ${cli.doc}`));
+  if (cli.fone) L.push(cCentro(`Tel: ${cli.fone}`));
+  L.push(cLinha());
+
+  L.push(cCentro(`PEDIDO Nº ${p.numero}`));
+  L.push(cCentro(`${fmtData(p.data)} ${agora.toLocaleTimeString('pt-BR')}`));
+  if (p.usuario) L.push(cCentro(`Atendido por: ${p.usuario}`));
+  if (p.obs) { L.push(''); cQuebraTexto('Obs: ' + p.obs).forEach(l => L.push(l)); }
+  if (emp.pix) { L.push(''); L.push(cCentro(`PIX: ${emp.pix}`)); }
+  L.push(cLinha('='));
+  if (emp.email) L.push(cCentro(emp.email));
+  L.push('```');
+
   return L.join('\n');
 }
 
@@ -3504,21 +3566,59 @@ function fallbackCopiar(txt) {
   ta.remove();
 }
 
-window.imprimirNota = function () {
+window.baixarNotaPDF = async function () {
   if (!notaAtual) return;
-  const estilos = document.querySelector('style').textContent;
-  const w = window.open('', '_blank');
-  if (!w) { window.print(); return; }
-  w.document.write(`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8">
-    <title>Pedido ${notaAtual.numero} — Dutra</title>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style>${estilos}
-      body{background:#fff;display:block;height:auto;overflow:auto;padding:16px}
-      html{height:auto;overflow:auto}
-      .nota{box-shadow:none;border:none;max-width:760px;margin:0 auto}
-    </style></head><body>${notaHTML(notaAtual)}</body></html>`);
-  w.document.close();
-  setTimeout(() => { w.focus(); w.print(); }, 350);
+  const origem = document.getElementById('folhaNota');
+  if (!origem || typeof html2canvas === 'undefined' || !window.jspdf) {
+    toast('Não foi possível gerar o PDF', 'error');
+    return;
+  }
+  showLoad('Gerando PDF...');
+  try {
+    // Renderiza a nota fora da tela em fundo branco, sem sombras/bordas, para um PDF limpo.
+    const clone = origem.cloneNode(true);
+    clone.style.boxShadow = 'none';
+    clone.style.border = 'none';
+    clone.style.margin = '0';
+    const wrap = document.createElement('div');
+    wrap.style.position = 'fixed';
+    wrap.style.left = '-9999px';
+    wrap.style.top = '0';
+    wrap.style.background = '#fff';
+    wrap.style.width = origem.offsetWidth + 'px';
+    wrap.appendChild(clone);
+    document.body.appendChild(wrap);
+
+    const canvas = await html2canvas(clone, { scale: 2, backgroundColor: '#ffffff', useCORS: true });
+    document.body.removeChild(wrap);
+
+    const { jsPDF } = window.jspdf;
+    const imgData = canvas.toDataURL('image/jpeg', 0.95);
+    const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
+    const pageW = pdf.internal.pageSize.getWidth();
+    const pageH = pdf.internal.pageSize.getHeight();
+    const imgW = pageW - 20;
+    const imgH = (canvas.height * imgW) / canvas.width;
+
+    let heightLeft = imgH;
+    let y = 10;
+    pdf.addImage(imgData, 'JPEG', 10, y, imgW, imgH);
+    heightLeft -= (pageH - 20);
+    while (heightLeft > 0) {
+      pdf.addPage();
+      y = heightLeft - imgH + 10;
+      pdf.addImage(imgData, 'JPEG', 10, y, imgW, imgH);
+      heightLeft -= (pageH - 20);
+    }
+
+    pdf.save(`pedido-${notaAtual.numero}.pdf`);
+    toast('PDF gerado', 'success');
+  } catch (e) {
+    console.error(e);
+    toast('Erro ao gerar PDF', 'error');
+  } finally {
+    hideLoad();
+  }
 };
 
 // ============================================================
