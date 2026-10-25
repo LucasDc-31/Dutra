@@ -1,0 +1,23 @@
+# Sistema
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editores
+.vscode/
+.idea/
+*.swp
+
+# Node (caso o projeto ganhe build/dependências)
+node_modules/
+npm-debug.log*
+
+# Variáveis locais e segredos (NUNCA suba a service_role key)
+.env
+.env.*
+*.local
+
+# Arquivos temporários
+*.log
+*.tmp
+*.zip
